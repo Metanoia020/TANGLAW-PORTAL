@@ -85,7 +85,7 @@
     </main>
   </div>
 
-  <script>
+  <script type="module">
     // Firebase imports (same as admin)
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js';
     import { getDatabase, ref, push, onValue, update } from 'https://www.gstatic.com/firebasejs/9.22.1/firebase-database.js';
@@ -135,8 +135,8 @@
     }
 
     function generateInvoiceId(index = Date.now()) {
-      const suffix = String(index).slice(-3).padStart(3, '0');
-      return `TNG-2026-${suffix}`;
+      const suffix = crypto.randomUUID();
+      return `TNG-${new Date().getFullYear()}-${suffix}`;
     }
 
     function formatCurrency(amount) {

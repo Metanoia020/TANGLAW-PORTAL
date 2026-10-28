@@ -1,0 +1,14 @@
+# Local settings and private key material
+.env
+.env.*
+!.env.example
+*.local
+*serviceAccount*.json
+*service-account*.json
+*.pem
+*.p12
+*.key
+node_modules/
+coverage/
+.DS_Store
+Thumbs.db

@@ -31,9 +31,10 @@
     <div class="w-full max-w-md rounded-[2rem] border border-slate-700 bg-slate-900/95 p-8 shadow-2xl relative">
       <button id="closeLoginBtn" class="absolute top-4 right-4 text-slate-400 hover:text-white text-2xl">&times;</button>
       <h1 class="text-3xl font-semibold text-white">TANGLAW ADMIN LOGIN</h1>
-      <p class="mt-2 text-sm text-slate-400">Enter the admin passcode to continue.</p>
+      <p class="mt-2 text-sm text-slate-400">Sign in with your Firebase administrator account. Your admin claim must be server-issued.</p>
       <div class="mt-8 space-y-4">
-        <input id="adminPasscode" type="password" placeholder="Admin passcode" class="w-full rounded-3xl border border-slate-700 bg-slate-950/90 px-4 py-3 text-slate-100 outline-none input-glow" />
+        <input id="adminEmail" type="email" autocomplete="username" placeholder="Admin email" class="w-full rounded-3xl border border-slate-700 bg-slate-950/90 px-4 py-3 text-slate-100 outline-none input-glow" />
+        <input id="adminPasscode" type="password" autocomplete="current-password" placeholder="Admin passcode" class="w-full rounded-3xl border border-slate-700 bg-slate-950/90 px-4 py-3 text-slate-100 outline-none input-glow" />
         <button id="loginBtn" class="w-full rounded-3xl bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">Unlock Dashboard</button>
       </div>
     </div>
@@ -190,15 +191,15 @@
 
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js';
+    import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, getIdTokenResult } from 'https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js';
     import { getDatabase, ref, push, onValue, update } from 'https://www.gstatic.com/firebasejs/9.22.1/firebase-database.js';
     import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'https://www.gstatic.com/firebasejs/9.22.1/firebase-storage.js';
 
-    const ADMIN_PASSCODE = 'TANGLAW2026';
-    const STORAGE_KEY = 'tanglawAdminAuthenticated';
     const firebaseStatus = document.getElementById('firebaseStatus');
     const loginOverlay = document.getElementById('loginOverlay');
     const appRoot = document.getElementById('app');
     const adminPasscodeInput = document.getElementById('adminPasscode');
+    const adminEmailInput = document.getElementById('adminEmail');
     const loginBtn = document.getElementById('loginBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     const payerName = document.getElementById('payerName');
@@ -246,7 +247,7 @@
       measurementId: "G-FGELNRSP4F"
     };
 
-    let db, storage;
+    let db, storage, auth;
     let firebaseEnabled = false;
     let payments = {};
     let selectedReceipt = null;
@@ -261,6 +262,16 @@
         const app = initializeApp(firebaseConfig);
         db = getDatabase(app);
         storage = getStorage(app);
+        auth = getAuth(app);
+        onAuthStateChanged(auth, async user => {
+          let authorized = false;
+          if (user) {
+            try { const token = await getIdTokenResult(user, true); authorized = token.claims.admin === true; }
+            catch (error) { console.warn('Admin claim verification failed', error); }
+          }
+          setAdminMode(authorized);
+          if (authorized) refreshPaymentState(); else { payments = {}; renderPayments(); }
+        });
         firebaseEnabled = true;
         setStatus('Firebase connected', 'text-emerald-300');
       } catch (error) {
@@ -271,8 +282,8 @@
     }
 
     function generateInvoiceId(index = Date.now()) {
-      const suffix = String(index).slice(-3).padStart(3, '0');
-      return `TNG-2026-${suffix}`;
+      const suffix = crypto.randomUUID();
+      return `TNG-${new Date().getFullYear()}-${suffix}`;
     }
 
     function formatCurrency(amount) {
@@ -281,7 +292,6 @@
 
     function setAdminMode(value) {
       isAdmin = value;
-      sessionStorage.setItem(STORAGE_KEY, value ? 'true' : 'false');
       adminLoginBtn.classList.toggle('hidden', value);
       logoutBtn.classList.toggle('hidden', !value);
       accessLabel.textContent = value ? 'Admin View' : 'Member View';
@@ -298,13 +308,16 @@
     function showAuthenticated() {
       loginOverlay.classList.add('hidden');
       adminPasscodeInput.value = '';
-      setAdminMode(true);
-      refreshPaymentState();
+      adminEmailInput.value = '';
+      // Admin authorization is controlled by Firebase Auth and custom claims.
     }
 
     function hideAuthenticated() {
       setAdminMode(false);
+      payments = {};
+      renderPayments();
       adminPasscodeInput.value = '';
+      if (auth) signOut(auth).catch(console.error);
     }
 
     function showLoginOverlay() {
@@ -312,12 +325,16 @@
       adminPasscodeInput.focus();
     }
 
-    function authenticate() {
-      if (adminPasscodeInput.value.trim() === ADMIN_PASSCODE) {
+    async function authenticate() {
+      if (!auth) { alert('Firebase Authentication unavailable.'); return; }
+      loginBtn.disabled = true;
+      try {
+        const user = (await signInWithEmailAndPassword(auth, adminEmailInput.value.trim(), adminPasscodeInput.value)).user;
+        const token = await getIdTokenResult(user, true);
+        if (token.claims.admin !== true) { await signOut(auth); throw new Error('Admin role required'); }
         showAuthenticated();
-      } else {
-        alert('Invalid passcode.');
-      }
+      } catch (error) { alert('Sign-in failed or admin privileges missing.'); console.warn('Sign-in failed', error.code || error.message); }
+      finally { loginBtn.disabled = false; }
     }
 
     function getLocalPaymentKey() {
@@ -325,13 +342,11 @@
     }
 
     function saveLocalPayments() {
-      localStorage.setItem(getLocalPaymentKey(), JSON.stringify(payments));
+      // Payment records must not be persisted in browser localStorage.
     }
 
     function loadLocalPayments() {
-      const raw = localStorage.getItem(getLocalPaymentKey());
-      if (!raw) return {};
-      try { return JSON.parse(raw); } catch { return {}; }
+      return {}; // No payment records are loaded from browser localStorage.
     }
 
     function syncPaymentsFromFirebase(snapshot) {
@@ -344,7 +359,7 @@
     function refreshPaymentState() {
       payments = loadLocalPayments();
       renderPayments();
-      if (firebaseEnabled) {
+      if (firebaseEnabled && isAdmin) {
         const paymentsRef = ref(db, 'payments');
         onValue(paymentsRef, syncPaymentsFromFirebase, error => {
           console.error('Firebase listener failed', error);
@@ -627,11 +642,7 @@
     });
 
     tryInitializeFirebase();
-    const savedAdmin = sessionStorage.getItem(STORAGE_KEY) === 'true';
-    setAdminMode(savedAdmin);
-    if (savedAdmin) {
-      showAuthenticated();
-    }
+    setAdminMode(false); // Deny privileges until server-issued claim is verified.
   </script>
 </body>
 </html>
