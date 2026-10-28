@@ -282,8 +282,8 @@
     }
 
     function generateInvoiceId(index = Date.now()) {
-      const suffix = String(index).slice(-3).padStart(3, '0');
-      return `TNG-2026-${suffix}`;
+      const suffix = crypto.randomUUID();
+      return `TNG-${new Date().getFullYear()}-${suffix}`;
     }
 
     function formatCurrency(amount) {
